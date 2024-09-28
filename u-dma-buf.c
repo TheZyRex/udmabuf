@@ -55,8 +55,11 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/version.h>
+#include <linux/ioctl.h>
 #include <asm/page.h>
 #include <asm/byteorder.h>
+
+#include "u-dma-buf-ioctl.h"
 
 /**
  * DOC: Udmabuf Constants.
@@ -122,6 +125,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 #ifndef U64_MAX
 #define U64_MAX ((u64)~0ULL)
 #endif
+
 
 /**
  * DOC: Udmabuf Static Variables.
@@ -952,16 +956,65 @@ static loff_t udmabuf_device_file_llseek(struct file* file, loff_t offset, int w
 }
 
 /**
+ * udmabuf_device_file_ioctl() - udmabuf device file ioctl operation.
+ * @file:       Pointer to the file structure.
+ * @cmd:        The ioctl command to be executed (e.g., UDMABUF_IOCTL_SYNC).
+ * @arg:        Pointer to user-space data associated with the ioctl command.
+ * 
+ * Returns:     0 on success
+ */
+static long udmabuf_device_file_ioctl(struct file* file, unsigned int cmd, unsigned long arg)
+{
+    struct udmabuf_object* this = file->private_data;
+    int status = 0;
+
+    switch(cmd) {
+    case UDMABUF_IOCTL_SYNC:
+        unsigned long long     sync_args;
+        unsigned int           sync_direction;
+        unsigned int           sync_for_cpu;
+        dma_addr_t             phys_addr;
+        size_t                 sync_size;
+
+        // Copy synchronization arguments from user space to kernel space
+        if (copy_from_user(&sync_args, (void __user *)arg, sizeof(sync_args)))
+            return -EFAULT;
+
+        // Extract synchronization direction from arguments (0 = device, 1 = CPU)
+        sync_for_cpu = sync_args & 0x1;
+
+        status = udmabuf_sync_command_argments(this, sync_args, &phys_addr, &sync_size, &sync_direction);
+        if (status == 0) {
+            if (sync_for_cpu) {
+                dma_sync_single_for_cpu(this->dma_dev, phys_addr, sync_size, sync_direction);
+                this->sync_for_cpu  = 0;
+                this->sync_owner    = 0;
+            } else {
+                dma_sync_single_for_device(this->dma_dev, phys_addr, sync_size, sync_direction);
+                this->sync_for_device   = 0;
+                this->sync_owner        = 1;
+            }
+        }
+
+        return status;
+
+    default:
+        return -EINVAL;
+    }
+}
+
+/**
  * udmabuf device file operation table.
  */
 static const struct file_operations udmabuf_device_file_ops = {
-    .owner   = THIS_MODULE,
-    .open    = udmabuf_device_file_open,
-    .release = udmabuf_device_file_release,
-    .mmap    = udmabuf_device_file_mmap,
-    .read    = udmabuf_device_file_read,
-    .write   = udmabuf_device_file_write,
-    .llseek  = udmabuf_device_file_llseek,
+    .owner          = THIS_MODULE,
+    .open           = udmabuf_device_file_open,
+    .release        = udmabuf_device_file_release,
+    .mmap           = udmabuf_device_file_mmap,
+    .read           = udmabuf_device_file_read,
+    .write          = udmabuf_device_file_write,
+    .llseek         = udmabuf_device_file_llseek,
+    .unlocked_ioctl = udmabuf_device_file_ioctl,
 };
 
 /**
