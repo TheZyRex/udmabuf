@@ -5,6 +5,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <time.h>
 
 #include "u-dma-buf-ioctl.h"
@@ -47,6 +48,7 @@ void doBenchmark(size_t length, double* result)
 
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
   for (size_t i = 0; i < LOOPS; ++i, off+=length) {
+    combined_value = (combined_value & 0x00000000FFFFFFFF) | ((off & 0xFFFFFFFFULL) << 32);
     ioctl(fd_sync, UDMABUF_IOCTL_SYNC, &combined_value);
     memcpy(destBuf+off, buf+off, length);
   }
@@ -61,12 +63,12 @@ void doBenchmark(size_t length, double* result)
 
 int main()
 {
-  int reps = 1000;
+  int reps = 100;
   int testing_size = 0;
   FILE* fp = fopen("results.txt", "w");
   double* results = (double*)malloc(sizeof(double)*reps);
   
-  for (int k = 0; k < 20; ++k)
+  for (int k = 0; k <= 16; ++k)
   {
 	  testing_size = 1 << k;
 	  for (int i = 0; i < reps; ++i)
